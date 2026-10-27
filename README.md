@@ -1,8 +1,8 @@
 # github-release
 
-**English:** Take a project from a local folder to a published GitHub release — repo setup, commits, semantic versioning, release assets, About and topics — including the path where `git push` simply won't connect.
+**English:** Take a project from a local folder to a published GitHub release — secret scan, repo setup, commits, semantic versioning, release assets, About and topics — including the path where `git push` simply won't connect.
 
-把本地项目一路推到发版上线：建仓库、配 remote、打 tag、传附件、设 About，另加一条 git 推不上时的替代通道。
+把本地项目一路推到发版上线：发布前扫一遍密钥和隐私、建仓库、打 tag、传附件、设 About，另加一条 git 推不上时的替代通道。
 
 ## 安装
 
@@ -37,7 +37,8 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.workbuddy\skills\github-rel
 
 | 你说 | 它做 |
 |---|---|
-| 「这个项目发到 GitHub 上，仓库叫 xxx」 | 查身份与凭据、扫个人信息残留、建仓库、推代码 |
+| 「这个项目发到 GitHub 上，仓库叫 xxx」 | 查身份与凭据、**扫一遍密钥和个人信息**、建仓库、推代码 |
+| 「发之前帮我查一遍有没有泄露密钥」 | 扫全部待提交文件，按 BLOCK / WARN / INFO 出打码报告 |
 | 「发个 v1.2.0」 | 校验版本号与 CHANGELOG、打 tag、传附件、设 About 和 topics，再下载回来验一遍 |
 | 「push 一直连不上 github」 | 排查代理，自动转 Git Data API 推送，并说明本地与远程怎么对齐 |
 | 「v1.2.0 发错了，撤回」 | 按场景处理：删 release / 删 tag / 回退 main，改写历史前先问你 |
@@ -48,6 +49,7 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.workbuddy\skills\github-rel
 
 | 常见毛病 | 表现 | 后果 |
 |---|---|---|
+| 密钥跟着代码上了公网 | 私钥、token、`.env` 混进提交 | 推上去就收不回来，只能吊销 |
 | 代理配了但没开 | `Failed to connect ... over proxy 127.0.0.1:7890` | 以为网络挂了，反复重试 |
 | 代理不支持 HTTPS 隧道 | `CONNECT tunnel failed 502` | 换一个代理再试，还是不通 |
 | 打完包又改文档 | tag 指向的 commit 落后 main | release 里的代码和仓库不一致 |
@@ -55,7 +57,8 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.workbuddy\skills\github-rel
 
 ## 它怎么做的
 
-- **五阶段闸门**：环境 → 初始化 → 提交 → 版本 → 发布 → 验证。每阶段有验收标准，不过不进下一阶段。
+- **阶段闸门**：环境 → 初始化 → 安全门 → 提交 → 版本 → 发布 → 验证。每阶段有验收标准，不过不进下一阶段。
+- **安全门分级**：BLOCK 只留给私钥和云厂商密钥格式（几乎不可能误报），密码字面量、绝对路径、身份证手机号、下载即执行这类走 WARN，人来判断。报告里的证据是打码的。
 - **推送双通道**：先试 `git push`，失败自动改用 Git Data API——建 blob、建 tree、建 commit、移分支指针，绕开传输层。
 - **元信息用英文**：About、topics、README 首段走英文。GitHub 搜索按英文字面索引，中文简介只有中文查询能匹配上。
 - **发布必须验**：附件下载、解压结构、跑一次自检。HTTP 201 只说明文件收到了，不代表能下载、能跑。
@@ -65,23 +68,26 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.workbuddy\skills\github-rel
 - **CI/CD 与自动化部署**：这里只管「发版」这一步，构建流水线和部署环境不在范围内。
 - **多人协作的分支策略**：以单人主线为主，没有 PR 流程和 code review 规则。
 - **组织级权限管理**：私有仓库的团队权限、保护分支规则，得在网页上配。
+- **判定代码是否恶意**：安全扫描只标记危险模式（下载即执行、`eval` 套输入），不下结论。意图不可判。
 
 ## 结构
 
 ```
 github-release/
-├── SKILL.md                触发条件、五阶段流程、五条铁律
+├── SKILL.md                触发条件、六阶段流程、六条铁律
 ├── references/
 │   ├── api-fallback.md     API 推送的原理与手工步骤
 │   ├── troubleshooting.md  按报错原文索引
 │   └── rollback.md         七种回滚场景
 ├── scripts/
 │   ├── gh_auth.py          发布前四查：身份、凭据、remote、网络
+│   ├── gh_scan.py          安全扫描：密钥、凭据、个人信息、危险代码模式
 │   ├── gh_push.py          推送，git 失败自动转 API
 │   ├── gh_release.py       建 release + 传附件 + 配 About
 │   └── _gh.py              公共模块：取 token、调 API、解析 remote
 ├── assets/
 │   └── readme-template.md  发版前的 README 对照模板
+├── .ghscanignore           扫描豁免（规则名 + 路径 glob）
 └── pack.py                 打 zip
 ```
 

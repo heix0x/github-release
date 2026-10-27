@@ -15,13 +15,14 @@ agent_created: true
 - 推送失败（网络、代理、权限）需要排障或换路径
 - 发错了版本要回滚
 
-## 五条铁律
+## 六条铁律
 
 1. **先定稿文档，再打包发版。** 反例：打完包又改 README，导致 tag 指向的 commit 落后于 main，release 里的代码和仓库不一致。
 2. **发布前工作区必须干净。** `git status --porcelain` 有输出就不许发版。
-3. **tag 推上去就不动。** 发错了用新版本号重发，不要删 tag 重建——别人可能已经拉过了。
-4. **附件必须验过。** 上传不等于可用：下载回来、解压、跑一次，才算发布完成。
-5. **覆盖操作先确认。** `--force`、删 remote 分支、重置 history，执行前必须让人明确同意。
+3. **BLOCK 不许带着推。** `gh_scan.py` 报 BLOCK 就停下来处理。真误报写进 `.ghscanignore` 并注明原因，**不许删规则、删检查来绕过**。
+4. **tag 推上去就不动。** 发错了用新版本号重发，不要删 tag 重建——别人可能已经拉过了。
+5. **附件必须验过。** 上传不等于可用：下载回来、解压、跑一次，才算发布完成。
+6. **覆盖操作先确认。** `--force`、删 remote 分支、重置 history，执行前必须让人明确同意。
 
 ## 阶段 0：环境检查
 
@@ -67,11 +68,44 @@ git branch -M main
 
 ### 提交前扫一遍个人信息
 
+**这一步不用手敲，跑 `scripts/gh_scan.py`（见下方阶段 1.5）。** 它覆盖的不只是路径和姓名，还有密钥、凭据文件、危险代码模式。
+
+## 阶段 1.5：发布前安全门
+
 ```bash
-grep -rn "C:\\\\Users\|/Users/" --include="*.py" --include="*.md" .
+python scripts/gh_scan.py [--repo <路径>]
 ```
 
-代码注释里出现自己的真实姓名是最容易漏的泄露点，也要一起搜。
+扫「即将被 `git add -A` 收进去的全部文件」——已跟踪的，加上未跟踪且没被 `.gitignore` 排除的。后者最容易被忘掉。
+
+| 退出码 | 含义 | 怎么做 |
+|---|---|---|
+| 0 | 干净 | 继续 |
+| 3 | 只有 WARN | 逐条看，确认无害再继续 |
+| 2 | 有 BLOCK | 停下来处理，不许带着推 |
+
+规则分三层：
+
+- **BLOCK**：私钥块、AWS/GitHub/GitLab/Slack/OpenAI/Google/Stripe 的密钥格式。这两类几乎不可能是误报。
+- **WARN**：密码字面量、带用户名的绝对路径、邮箱/身份证/手机号、真实姓名、下载即执行、`eval` 套 `input`、`os.system` 拼 f-string、`.env` / `*.pem` / `*.jks` 这类文件名。
+- **INFO**：超过 1 MB 的文件、数据库文件。
+
+**四个必须守住的点：**
+
+1. **证据是打码的**（`AKIA***MPLE`）。别在别处把完整值打印出来——扫描日志本身会变成泄露载体。
+2. **豁免写在 `.ghscanignore`**，按「规则名 + 路径 glob」：`ABS_PATH_WIN  docs/*.md`。只写 glob 表示该文件豁免全部规则。**不提供按内容豁免**——那等于给了一个「全部忽略」的开关。
+3. **不要为了让门变绿去放宽规则**。BLOCK 只有两类，其余都是 WARN，本来就不挡路。真误报就写进 `.ghscanignore`，并在旁边注明原因。
+4. **只扫当前工作区**。base64 里的密钥、zip 里的 `.env`、历史提交里的旧泄露，它都发现不了；那类问题走 `references/rollback.md`。
+
+**它不判定「恶意代码」。** 代码意图不可判，它只标记危险模式，由人确认。
+
+自定义检查（学号、内部域名之类）：
+
+```bash
+python scripts/gh_scan.py --extra "2261\d{8}"
+```
+
+**发布前还要再跑一次**（阶段 4 之前）。阶段 1.5 之后可能又加过文件，而 API 推送会把 `git ls-files` 整个重发一遍——推之前那一刻才是最后一道。
 
 ## 阶段 2：提交
 
@@ -191,6 +225,9 @@ answers back — a Playwright-based AI agent skill.
 ## 阶段 4：发布
 
 ```bash
+# 0. 安全门第二遍（阶段 1.5 之后可能又加过文件）
+python scripts/gh_scan.py
+
 # 1. 定稿所有文档，提交并推送
 git add -A && git commit -m "docs: 定稿 README"
 python scripts/gh_push.py
@@ -243,6 +280,7 @@ python scripts/gh_release.py --tag v1.2.0 \
 | 脚本 | 用途 |
 |---|---|
 | `scripts/gh_auth.py` | 发布前检查：身份、凭据、remote、网络 |
+| `scripts/gh_scan.py` | 安全扫描：密钥、凭据、个人信息、危险代码模式 |
 | `scripts/gh_push.py` | 推送，git 失败自动转 API |
 | `scripts/gh_release.py` | 建 release + 传附件 + 配 About |
 | `scripts/_gh.py` | 公共模块：取 token、调 API、解析 remote |
