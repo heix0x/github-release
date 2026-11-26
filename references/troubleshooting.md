@@ -187,3 +187,30 @@ git log -p | grep -n "真实姓名\|C:\\\\Users\|/Users/"
 **原因**：Windows 的 CRLF 和仓库的 LF 冲突。
 
 **处理**：加 `.gitattributes` 强制 LF，然后 `git add --renormalize .`。
+
+---
+
+## 七、走 API 推送之后
+
+### 按提示跑 `git fetch && git reset --hard` 反而丢了提交
+
+**现象**：`gh_push.py` 走 API 兜底后打印「网络恢复后执行 `git fetch && git reset --hard origin/main` 对齐」。
+照着做，`git fetch` 因为代理还是不通而失败，但 `&&` 之后的 `reset --hard` 用了**本地的陈旧 `origin/main` ref**，
+main 直接退回到上一个已推送的提交，刚做完的改动从分支上消失（reflog 里还在，能捞）。
+
+**原因**：`git fetch` 失败时 `origin/main` 仍是旧值，`reset --hard` 看不出异常。`&&` 只保证前一条**退出码**为 0，
+不保证 ref 更新过。
+
+**处理**：
+
+1. 先从 reflog 找回：`git reflog` 找到丢掉的 commit，`git reset --hard <hash>`。
+2. 对齐的前提是 **fetch 成功**。分两步执行，别写在一条 `&&` 里：
+
+```bash
+git fetch origin || { echo "fetch 失败，先别动本地分支"; exit 1; }
+git reset --hard origin/main
+```
+
+3. 更稳的做法：只对齐 ref，不动工作区 —— `git update-ref refs/heads/main origin/main`（确认工作区已提交后）。
+
+**规则**：`gh_push.py` 打印的那行提示，只有在确认网络恢复、`git fetch` 有实际输出时才照做。
